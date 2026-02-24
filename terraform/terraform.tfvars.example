@@ -1,0 +1,10 @@
+# Copia este archivo a terraform.tfvars y completa los valores
+
+aws_region          = "us-east-1"
+ecr_repository_name = "ewood-backend"
+s3_bucket_name      = "ewood-docker-compose-files"
+instance_type       = "t3a.nano"
+ami_id              = "ami-08c40ec9ead489470"  # Ubuntu 22.04 LTS en us-east-1
+
+# ⚠️ IMPORTANTE: Debes proporcionar tu VPC ID
+vpc_id              = "vpc-xxxxxxxxx"

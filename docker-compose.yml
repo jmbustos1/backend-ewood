@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  golang-tcp-server:
+    image: 262623998832.dkr.ecr.us-east-1.amazonaws.com/ewood-backend:latest
+    container_name: ewood-golang-container
+    ports:
+      - "8200:8080"  # HTTP
+      - "8201:8201"  # TCP
+    restart: unless-stopped
+    tty: true
+    # Cargar variables desde archivo descargado de S3
+    env_file:
+      - /home/ubuntu/env.production
+    environment:
+      - ENV=production
+      - API_BASE_URL=http://localhost:8080

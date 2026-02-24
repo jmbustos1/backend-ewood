@@ -1,0 +1,110 @@
+services:
+  # Base de datos MongoDB
+  mongodb:
+    image: mongo:7.0
+    container_name: ewood-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin123
+      - MONGO_INITDB_DATABASE=ewood
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    restart: unless-stopped
+    networks:
+      - ewood-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "{{.Name}}/{{.ID}}"
+
+  # Base de datos PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: ewood-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=ewood_user
+      - POSTGRES_PASSWORD=ewood_pass
+      - POSTGRES_DB=ewood_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - ewood-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ewood_user -d ewood_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "{{.Name}}/{{.ID}}"
+
+  # Servicio Go
+  golang-ewood:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ewood-challenge
+    container_name: ewood-challenge
+
+    # volumes:
+    #   - .:/app
+
+    ports:
+      - "8200:8080"  # HTTP
+      - "8201:8201"  # TCP
+
+    environment:
+      - API_BASE_URL=http://localhost:8080
+      # Variables de MongoDB
+      - MONGODB_URI=mongodb://admin:admin123@mongodb:27017/ewood?authSource=admin
+      - MONGODB_DATABASE=ewood
+      # Variables de PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=ewood_user
+      - POSTGRES_PASSWORD=ewood_pass
+      - POSTGRES_DB=ewood_db
+      - POSTGRES_SSLMODE=disable
+      - ENV=local
+      - SCOOTER_ADMIN_KEY=ewood_admin_key
+      # Variables de configuración TCP
+      - TCP_HOST=
+      - TCP_PORT=8201
+
+    restart: unless-stopped
+    tty: true
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - ewood-network
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  ewood-network:
+    driver: bridge
