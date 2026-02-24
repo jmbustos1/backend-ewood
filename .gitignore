@@ -1,0 +1,44 @@
+# Binarios
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# server
+
+# Archivos de test
+*.test
+*.out
+
+# Archivos de go
+go.work
+
+# Variables de entorno
+.env
+.env.push
+env.production
+*.pem
+
+# Archivos generados por deploy
+docker-compose.prod.yml
+
+# Logs
+*.log
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+terraform.tfvars
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
