@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   golang-tcp-server:
-    image: 262623998832.dkr.ecr.us-east-1.amazonaws.com/ewood-backend:latest
+    image: 847321857462.dkr.ecr.us-east-1.amazonaws.com/ewood-backend:latest
     container_name: ewood-golang-container
     ports:
       - "8200:8080"  # HTTP
