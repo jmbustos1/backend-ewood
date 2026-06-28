@@ -42,3 +42,6 @@ terraform.tfvars
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude skills locales (con credenciales)
+.claude/
