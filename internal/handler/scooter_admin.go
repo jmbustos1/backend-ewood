@@ -90,19 +90,21 @@ func CreateScooterHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListScootersHandler lista todos los scooters
+// ListScootersHandler lista todos los scooters, con filtro opcional por city_id
 func ListScootersHandler(w http.ResponseWriter, r *http.Request) {
-	var scooters []models.Scooter
-	if err := postgres.GDB.Find(&scooters).Error; err != nil {
+	query := postgres.GDB.Where("deleted_at IS NULL")
+
+	if cityID := r.URL.Query().Get("city_id"); cityID != "" {
+		query = query.Where("city_id = ?", cityID)
+	}
+
+	scooters := make([]models.Scooter, 0)
+	if err := query.Find(&scooters).Error; err != nil {
 		http.Error(w, "Error fetching scooters", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"scooters": scooters,
-	})
+	writeJSON(w, http.StatusOK, scooters)
 }
 
 // GetScooterHandler obtiene un scooter por ID

@@ -13,11 +13,18 @@ import (
 
 // TCPLocationRequest representa la petición TCP para actualizar ubicación
 type TCPLocationRequest struct {
-	ScooterID   uint     `json:"scooter_id"`
-	Latitude    float64  `json:"latitude"`
-	Longitude   float64  `json:"longitude"`
-	BatteryLevel int     `json:"battery_level"`
-	SpeedKmh    *float64 `json:"speed_kmh,omitempty"`
+	ScooterID    uint     `json:"scooter_id"`
+	Latitude     float64  `json:"latitude"`
+	Longitude    float64  `json:"longitude"`
+	BatteryLevel int      `json:"battery_level"`
+	SpeedKmh     *float64 `json:"speed_kmh,omitempty"`
+	DeviceSecret string   `json:"device_secret,omitempty"`
+}
+
+// getDeviceSecret retorna el secret esperado de los dispositivos IoT.
+// Si DEVICE_SECRET no está configurado, retorna "" (sin validación — modo dev).
+func getDeviceSecret() string {
+	return strings.TrimSpace(os.Getenv("DEVICE_SECRET"))
 }
 
 // StartTCPServer inicia el servidor TCP que recibe actualizaciones de ubicación
@@ -120,6 +127,16 @@ func handleTCPConnection(conn net.Conn) {
 
 		// Registrar o actualizar conexión en el manager
 		if currentScooterID == 0 || currentScooterID != tcpReq.ScooterID {
+			// Validar device_secret antes de registrar la conexión.
+			// Si DEVICE_SECRET está configurado en env, el dispositivo debe enviarlo.
+			expectedSecret := getDeviceSecret()
+			if expectedSecret != "" && tcpReq.DeviceSecret != expectedSecret {
+				log.Printf("🚫 Conexión rechazada desde %s (scooter_id: %d): device_secret inválido o ausente",
+					remoteAddr, tcpReq.ScooterID)
+				conn.Close()
+				return
+			}
+
 			// Primera vez que vemos este scooter_id en esta conexión
 			if manager != nil {
 				manager.RegisterConnection(tcpReq.ScooterID, conn)

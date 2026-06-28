@@ -141,6 +141,11 @@ func UpdateScooterLocationHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// unlockRequest es el body del endpoint de unlock
+type unlockRequest struct {
+	Code string `json:"code"`
+}
+
 // UnlockScooterHandler maneja el desbloqueo de un scooter
 func UnlockScooterHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -156,6 +161,13 @@ func UnlockScooterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parsear body para obtener el código
+	var req unlockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+		writeError(w, http.StatusBadRequest, "unlock code is required")
+		return
+	}
+
 	// Verificar que el scooter existe en la base de datos
 	var scooter models.Scooter
 	if err := postgres.GDB.First(&scooter, uint(scooterID)).Error; err != nil {
@@ -164,6 +176,18 @@ func UnlockScooterHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	// Validar código de desbloqueo
+	if scooter.UnlockCode == nil || *scooter.UnlockCode != req.Code {
+		writeError(w, http.StatusUnauthorized, "invalid_unlock_code")
+		return
+	}
+
+	// Validar que está disponible
+	if !scooter.IsAvailable() {
+		writeError(w, http.StatusConflict, "scooter_already_in_use")
 		return
 	}
 

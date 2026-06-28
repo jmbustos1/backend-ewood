@@ -26,6 +26,8 @@ type Scooter struct {
 	LastLatitude         *float64       `gorm:"type:decimal(10,8)" json:"last_latitude,omitempty"`
 	LastLongitude        *float64       `gorm:"type:decimal(11,8)" json:"last_longitude,omitempty"`
 	LastLocationUpdatedAt *time.Time    `json:"last_location_updated_at,omitempty"`
+	UnlockCode           *string        `gorm:"uniqueIndex;size:50" json:"-"`
+	CityID               *uint          `json:"city_id,omitempty"`
 	CurrentUserID        *uint          `json:"current_user_id,omitempty"`
 	CurrentTripID        *uint          `json:"current_trip_id,omitempty"`
 	TripStartedAt        *time.Time     `json:"trip_started_at,omitempty"`
@@ -34,6 +36,7 @@ type Scooter struct {
 	DeletedAt            gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
 	// Relaciones
+	City        *City  `gorm:"foreignKey:CityID" json:"city,omitempty"`
 	CurrentUser *User  `gorm:"foreignKey:CurrentUserID" json:"current_user,omitempty"`
 	CurrentTrip *Trip  `gorm:"foreignKey:CurrentTripID" json:"current_trip,omitempty"`
 	Trips       []Trip `gorm:"foreignKey:ScooterID" json:"trips,omitempty"`
