@@ -8,16 +8,19 @@ import (
 
 // User representa un usuario del sistema
 type User struct {
-	ID        uint           `gorm:"primaryKey" json:"id"`
-	Email     string         `gorm:"uniqueIndex;not null;size:255" json:"email"`
-	Name      string         `gorm:"not null;size:255" json:"name"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	ID              uint           `gorm:"primaryKey" json:"id"`
+	Email           string         `gorm:"uniqueIndex;not null;size:255" json:"email"`
+	Name            string         `gorm:"not null;size:255" json:"name"`
+	PasswordHash    *string        `gorm:"size:255" json:"-"`
+	PreferredCityID *uint          `json:"preferred_city_id,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
 	// Relaciones
-	Scooters []Scooter `gorm:"foreignKey:CurrentUserID" json:"scooters,omitempty"`
-	Trips    []Trip    `gorm:"foreignKey:UserID" json:"trips,omitempty"`
+	PreferredCity *City     `gorm:"foreignKey:PreferredCityID" json:"preferred_city,omitempty"`
+	Scooters      []Scooter `gorm:"foreignKey:CurrentUserID" json:"scooters,omitempty"`
+	Trips         []Trip    `gorm:"foreignKey:UserID" json:"trips,omitempty"`
 }
 
 // TableName especifica el nombre de la tabla
