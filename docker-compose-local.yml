@@ -86,6 +86,7 @@ services:
       # Variables de configuración TCP
       - TCP_HOST=
       - TCP_PORT=8201
+      - JWT_SECRET=ewood-dev-secret-change-in-production
 
     restart: unless-stopped
     tty: true
