@@ -24,7 +24,7 @@ resource "aws_security_group" "tcp_sg" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP publico (Let's Encrypt HTTP-01 + redirect a HTTPS)"
+    description = "HTTP publico (Lets Encrypt HTTP-01 + redirect a HTTPS)"
   }
 
   # TCP plano para telemetria de scooters ESP32+SIM7600
