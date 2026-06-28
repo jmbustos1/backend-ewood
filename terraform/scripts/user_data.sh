@@ -44,3 +44,24 @@ systemctl start amazon-ssm-agent
 
 # 🔹 Verificar que el servicio está corriendo
 systemctl status amazon-ssm-agent --no-pager
+
+# ─── Caddy reverse proxy + HTTPS (Let's Encrypt) ────────────────────────────
+# Termina TLS en 443 hacia el exterior y reenvia al backend Go que escucha
+# solo en localhost:8200 (no expuesto en el security group).
+# Caddy gestiona el certificado automaticamente via HTTP-01 challenge.
+apt install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt | tee /etc/apt/sources.list.d/caddy-stable.list
+apt update
+apt install -y caddy
+
+# Caddyfile inicial. El backend Go se conecta en localhost:8200.
+# El dominio api.exwood.dev tiene que estar ya apuntando al EIP de esta EC2
+# para que Let's Encrypt resuelva el HTTP-01 challenge.
+cat > /etc/caddy/Caddyfile <<'CADDYFILE'
+api.exwood.dev {
+    reverse_proxy localhost:8200
+}
+CADDYFILE
+
+systemctl reload caddy

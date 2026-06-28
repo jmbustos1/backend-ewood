@@ -16,7 +16,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = "exwood"
 }
 
 # Crear clave SSH si no existe
@@ -115,4 +116,33 @@ resource "random_password" "db_password" {
   length           = 16
   special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+# ─── IP elastica para el backend ─────────────────────────────────────────────
+# Mantiene la IP estable a traves de reboots / stop+start de la EC2.
+# Sin EIP, la public IP de una EC2 cambia y rompe el A record + Caddy.
+resource "aws_eip" "backend" {
+  domain = "vpc"
+  tags   = { Name = "ewood-backend-eip" }
+}
+
+resource "aws_eip_association" "backend" {
+  instance_id   = module.ec2.instance_id
+  allocation_id = aws_eip.backend.id
+}
+
+# ─── DNS — api.exwood.dev ────────────────────────────────────────────────────
+# La Hosted Zone la crea Route 53 automaticamente al registrar el dominio.
+# Solo agregamos el A record del subdominio apuntando al EIP.
+data "aws_route53_zone" "main" {
+  name         = "exwood.dev"
+  private_zone = false
+}
+
+resource "aws_route53_record" "api" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "api.exwood.dev"
+  type    = "A"
+  ttl     = 300
+  records = [aws_eip.backend.public_ip]
 }

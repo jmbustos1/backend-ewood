@@ -1,6 +1,6 @@
 resource "aws_security_group" "tcp_sg" {
   name        = "ec2-ewood-sg"
-  description = "Security Group para el servidor TCP en EC2"
+  description = "Security Group para el servidor Ewood (HTTPS via Caddy + TCP IoT)"
   vpc_id      = var.vpc_id
 
   lifecycle {
@@ -8,26 +8,48 @@ resource "aws_security_group" "tcp_sg" {
     ignore_changes        = [description]
   }
 
-  # Permitir tráfico HTTP/WebSocket en el puerto 8200 (mapeado al 8080 interno)
-  # Protocolo TCP es correcto - HTTP y WebSockets corren sobre TCP
+  # HTTPS publico — terminado por Caddy en EC2
   ingress {
-    from_port   = 8200
-    to_port     = 8200
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP API and WebSocket for scooters"
+    description = "HTTPS publico (Caddy reverse proxy al backend)"
   }
 
-  # Permitir tráfico TCP en el puerto 8201 para recibir actualizaciones de ubicación de scooters
+  # HTTP publico — Caddy lo usa para HTTP-01 challenge de Let's Encrypt
+  # y para redirigir 80 -> 443 automaticamente
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP publico (Let's Encrypt HTTP-01 + redirect a HTTPS)"
+  }
+
+  # TCP plano para telemetria de scooters ESP32+SIM7600
+  # (sin TLS — autenticacion via DEVICE_SECRET en el primer mensaje)
   ingress {
     from_port   = 8201
     to_port     = 8201
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "TCP for scooter location updates"
+    description = "TCP para telemetria de scooters IoT"
   }
 
-  # Permitir salida de tráfico para que EC2 pueda hacer pull de ECR
+  # SSH
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # TODO: limitar a IP del operador cuando este definida
+    description = "SSH para administracion"
+  }
+
+  # NOTA: el puerto 8200 (backend Go) NO se expone publicamente.
+  # Solo Caddy en localhost lo consume y termina TLS hacia el exterior en 443.
+
+  # Egress libre (pull ECR, comunicacion con AWS, Let's Encrypt, MercadoPago, etc.)
   egress {
     from_port   = 0
     to_port     = 0
@@ -35,23 +57,7 @@ resource "aws_security_group" "tcp_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Permitir acceso a SSM (puerto 443 para comunicación con AWS)
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # Permitir tráfico en el puerto 22 (SSH)
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # ⚠️ Cambia esto por TU IP para seguridad
-  }
-
   tags = {
-    Name = "ewood-tcp-server-sg"
+    Name = "ewood-backend-sg"
   }
 }
