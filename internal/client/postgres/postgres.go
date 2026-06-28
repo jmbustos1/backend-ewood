@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"os"
 	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	_ "github.com/lib/pq"
 )
@@ -48,10 +51,25 @@ func Connect(host, port, user, password, dbname, sslmode string) error {
 
 	DB = db
 
-	// Inicializar GORM
+	// Inicializar GORM con logger custom:
+	// IgnoreRecordNotFoundError=true → no log de "record not found", que es un
+	// resultado válido en queries como GET /api/trips/active (busca trip activo
+	// del usuario; si no hay, el handler retorna 404 sin que sea un error).
+	gormLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+		},
+	)
+
 	gormDB, err := gorm.Open(postgres.New(postgres.Config{
 		Conn: db,
-	}), &gorm.Config{})
+	}), &gorm.Config{
+		Logger: gormLogger,
+	})
 	if err != nil {
 		return fmt.Errorf("error inicializando GORM: %w", err)
 	}
