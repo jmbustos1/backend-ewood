@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Política de Privacidad — Ewood</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.65;
+      color: #e7e8e6;
+      background: #080D09;
+    }
+    h1 { color: #b9ff5a; margin-bottom: 4px; }
+    h2 { color: #b9ff5a; margin-top: 32px; border-bottom: 1px solid #2a2f2b; padding-bottom: 6px; }
+    h3 { color: #d6efb1; }
+    a { color: #b9ff5a; }
+    .meta { color: #889; font-size: 14px; margin-bottom: 24px; }
+    ul { padding-left: 22px; }
+    li { margin: 4px 0; }
+    .contact {
+      background: #11181a;
+      border: 1px solid #2a2f2b;
+      padding: 16px 20px;
+      border-radius: 10px;
+      margin-top: 32px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Política de Privacidad de Ewood</h1>
+  <p class="meta">Última actualización: 9 de junio de 2026</p>
+
+  <p>
+    Esta política describe cómo Ewood (en adelante "la app", "nosotros") recopila, usa y protege
+    la información personal de sus usuarios al utilizar la aplicación móvil de arriendo de scooters
+    eléctricos. Al usar Ewood, aceptas esta política.
+  </p>
+
+  <h2>1. Información que recopilamos</h2>
+
+  <h3>1.1 Información de cuenta</h3>
+  <ul>
+    <li><strong>Nombre y correo electrónico</strong>: para crear y autenticar tu cuenta.</li>
+    <li><strong>Contraseña</strong>: almacenada de forma cifrada usando bcrypt.</li>
+  </ul>
+
+  <h3>1.2 Información de ubicación</h3>
+  <ul>
+    <li>
+      <strong>Ubicación en tiempo real (GPS)</strong>: para mostrarte scooters cercanos, iniciar y
+      finalizar arriendos, y registrar el recorrido de tus viajes. Solo recopilamos ubicación
+      mientras la app está en uso (foreground).
+    </li>
+    <li>
+      <strong>Coordenadas de inicio/fin de viajes</strong>: se guardan en tu historial para que
+      puedas consultarlos.
+    </li>
+  </ul>
+
+  <h3>1.3 Información de pago</h3>
+  <ul>
+    <li>
+      Los pagos se procesan a través de <strong>MercadoPago</strong>. Ewood no almacena ni tiene
+      acceso a los datos de tu tarjeta de crédito o débito; estos son manejados directamente por
+      MercadoPago según su propia política de privacidad.
+    </li>
+    <li>
+      Almacenamos referencias internas a tus pagos (ID de transacción de MercadoPago) y el saldo
+      de tu billetera Ewood.
+    </li>
+  </ul>
+
+  <h3>1.4 Información de uso</h3>
+  <ul>
+    <li>Historial de viajes (fecha, duración, distancia, costo).</li>
+    <li>Saldo de la billetera y movimientos.</li>
+  </ul>
+
+  <h2>2. Cómo usamos tu información</h2>
+  <ul>
+    <li>Para proveer el servicio de arriendo de scooters.</li>
+    <li>Para procesar pagos y mantener actualizado tu saldo.</li>
+    <li>Para mostrar scooters cercanos en el mapa.</li>
+    <li>Para enviarte notificaciones operacionales (estado de un viaje, confirmación de recarga).</li>
+    <li>Para mejorar la app y prevenir fraudes.</li>
+  </ul>
+
+  <h2>3. Con quién compartimos tu información</h2>
+  <p>No vendemos tu información. La compartimos únicamente con:</p>
+  <ul>
+    <li><strong>MercadoPago</strong>: para procesar pagos.</li>
+    <li>
+      <strong>Proveedores de infraestructura</strong> (Amazon Web Services): para hospedar los
+      servidores que mantienen la app funcionando.
+    </li>
+    <li>
+      <strong>Autoridades legales</strong>: solo si nos lo exige la ley chilena o un proceso
+      judicial.
+    </li>
+  </ul>
+
+  <h2>4. Almacenamiento y seguridad</h2>
+  <ul>
+    <li>Los datos se almacenan en bases de datos PostgreSQL en infraestructura de AWS.</li>
+    <li>Las contraseñas se guardan cifradas con bcrypt; nunca en texto plano.</li>
+    <li>Las comunicaciones entre la app y los servidores usan HTTPS / WSS cifrado.</li>
+    <li>Los tokens de sesión son JWT con expiración limitada.</li>
+  </ul>
+
+  <h2>5. Tus derechos</h2>
+  <p>De acuerdo con la Ley 19.628 sobre protección de la vida privada en Chile, tienes derecho a:</p>
+  <ul>
+    <li>Acceder a tu información personal.</li>
+    <li>Solicitar la corrección de información inexacta.</li>
+    <li>Solicitar la eliminación de tu cuenta y datos asociados.</li>
+    <li>Retirar tu consentimiento (esto implica que ya no podrás usar la app).</li>
+  </ul>
+
+  <h2>6. Retención de datos</h2>
+  <p>
+    Mantenemos tu información mientras tu cuenta esté activa. Si eliminas tu cuenta, borramos
+    tus datos personales identificables dentro de 30 días, manteniendo solo registros agregados
+    o anonimizados cuando la ley lo exija (ej. contabilidad).
+  </p>
+
+  <h2>7. Menores de edad</h2>
+  <p>
+    Ewood está destinada a personas mayores de 18 años. No recopilamos intencionalmente datos
+    de menores. Si detectamos una cuenta de un menor, será eliminada.
+  </p>
+
+  <h2>8. Cambios a esta política</h2>
+  <p>
+    Podemos actualizar esta política. Las versiones más recientes estarán disponibles en esta
+    misma URL. Si los cambios son significativos, te notificaremos dentro de la app.
+  </p>
+
+  <div class="contact">
+    <h2 style="margin-top:0">9. Contacto</h2>
+    <p>Si tienes preguntas o quieres ejercer tus derechos:</p>
+    <p><strong>Email:</strong> <a href="mailto:contacto@exwood.cl">contacto@exwood.cl</a></p>
+  </div>
+</body>
+</html>
