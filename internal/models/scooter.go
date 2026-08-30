@@ -16,6 +16,16 @@ const (
 	ScooterStatusOffline    ScooterStatus = "offline"
 )
 
+// LockState representa el estado fisico del actuador reportado por el firmware
+// (byte Locker del frame SYS STATUS del hub de sensores).
+type LockState string
+
+const (
+	LockStateUnknown  LockState = "unknown"
+	LockStateLocked   LockState = "locked"
+	LockStateUnlocked LockState = "unlocked"
+)
+
 // Scooter representa el estado actual de un scooter
 type Scooter struct {
 	ID                   uint           `gorm:"primaryKey" json:"id"`
@@ -31,6 +41,8 @@ type Scooter struct {
 	CurrentUserID        *uint          `json:"current_user_id,omitempty"`
 	CurrentTripID        *uint          `json:"current_trip_id,omitempty"`
 	TripStartedAt        *time.Time     `json:"trip_started_at,omitempty"`
+	LockState            LockState      `gorm:"type:varchar(16);default:'unknown'" json:"lock_state"`
+	LockStateUpdatedAt   *time.Time     `json:"lock_state_updated_at,omitempty"`
 	CreatedAt            time.Time      `json:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at"`
 	DeletedAt            gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
