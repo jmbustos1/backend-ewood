@@ -21,6 +21,14 @@ type registerRequest struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+
+	// Consentimiento a documentos legales. Opcionales para no romper apps
+	// viejas — cuando la app envie estos campos, quedan persistidos en la
+	// tabla user_consents. Si no vienen, se asume aceptacion implicita
+	// (checkbox aceptado en la app) sin registro versionado.
+	// Ver ESTADO-ACTUAL.md P1 #9.
+	AcceptedTermsVersion   string `json:"accepted_terms_version,omitempty"`
+	AcceptedPrivacyVersion string `json:"accepted_privacy_version,omitempty"`
 }
 
 type loginRequest struct {
@@ -119,6 +127,12 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persistir consentimiento a documentos legales si vinieron en el request.
+	// Best-effort: si falla, no rollbackeamos el user creado (el consent es
+	// una mejora de trazabilidad, no un requisito duro para el registro).
+	persistUserConsent(user.ID, ConsentTermsDoc, req.AcceptedTermsVersion, r)
+	persistUserConsent(user.ID, ConsentPrivacyDoc, req.AcceptedPrivacyVersion, r)
+
 	access, refresh, err := generateTokens(user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not generate tokens")
@@ -126,6 +140,44 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, authResponse{AccessToken: access, RefreshToken: refresh, User: toUserPayload(user)})
+}
+
+// Constantes de tipo documento — se copian aca para que el handler no dependa
+// del paquete models (ya usa models.User pero por consistencia).
+const (
+	ConsentTermsDoc   = "terms"
+	ConsentPrivacyDoc = "privacy"
+)
+
+// persistUserConsent crea una fila en user_consents si version != "". Silencioso
+// ante fallos (best-effort).
+func persistUserConsent(userID uint, document, version string, r *http.Request) {
+	if version == "" {
+		return
+	}
+	// IP: prioriza X-Forwarded-For (Caddy) o cae a RemoteAddr.
+	ip := r.Header.Get("X-Forwarded-For")
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	if len(ip) > 64 {
+		ip = ip[:64]
+	}
+	ua := r.UserAgent()
+	if len(ua) > 255 {
+		ua = ua[:255]
+	}
+
+	consent := models.UserConsent{
+		UserID:     userID,
+		Document:   document,
+		Version:    version,
+		AcceptedAt: time.Now(),
+		IPAddress:  ip,
+		UserAgent:  ua,
+	}
+	// Ignorar error: best-effort.
+	_ = postgres.GDB.Create(&consent).Error
 }
 
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
