@@ -19,6 +19,11 @@ type TCPLocationRequest struct {
 	BatteryLevel int      `json:"battery_level"`
 	SpeedKmh     *float64 `json:"speed_kmh,omitempty"`
 	DeviceSecret string   `json:"device_secret,omitempty"`
+	// LockState: valores "locked" | "unlocked" | "unknown". Viene del hub
+	// de sensores del scooter (firmware ESP32 decodifica el byte Locker del
+	// frame SYS STATUS y lo reporta). Fuente de verdad del estado fisico
+	// del actuador.
+	LockState string `json:"lock_state,omitempty"`
 }
 
 // getDeviceSecret retorna el secret esperado de los dispositivos IoT.
@@ -151,10 +156,11 @@ func handleTCPConnection(conn net.Conn) {
 
 		// Convertir a UpdateScooterLocationRequest
 		req := UpdateScooterLocationRequest{
-			Latitude:    tcpReq.Latitude,
-			Longitude:   tcpReq.Longitude,
+			Latitude:     tcpReq.Latitude,
+			Longitude:    tcpReq.Longitude,
 			BatteryLevel: tcpReq.BatteryLevel,
-			SpeedKmh:    tcpReq.SpeedKmh,
+			SpeedKmh:     tcpReq.SpeedKmh,
+			LockState:    tcpReq.LockState,
 		}
 
 		// Procesar actualización usando lógica compartida

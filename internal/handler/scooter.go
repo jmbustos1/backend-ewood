@@ -16,10 +16,13 @@ import (
 
 // UpdateScooterLocationRequest representa la petición para actualizar ubicación
 type UpdateScooterLocationRequest struct {
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	BatteryLevel int    `json:"battery_level"`
-	SpeedKmh    *float64 `json:"speed_kmh,omitempty"`
+	Latitude     float64  `json:"latitude"`
+	Longitude    float64  `json:"longitude"`
+	BatteryLevel int      `json:"battery_level"`
+	SpeedKmh     *float64 `json:"speed_kmh,omitempty"`
+	// LockState del actuador reportado por el firmware. Valores esperados:
+	// "locked" | "unlocked" | "unknown". Fuente de verdad del estado fisico.
+	LockState string `json:"lock_state,omitempty"`
 }
 
 // ProcessLocationUpdate procesa una actualización de ubicación (lógica compartida)
@@ -45,6 +48,23 @@ func ProcessLocationUpdate(scooterID uint, req UpdateScooterLocationRequest) err
 
 	// Actualizar ubicación
 	scooter.UpdateLocation(req.Latitude, req.Longitude, req.BatteryLevel)
+
+	// Actualizar lock_state si viene en el request y es un valor conocido.
+	// Los scooters que aun no reportan (firmware viejo o SYS STATUS no recibido)
+	// mantienen su valor previo — no lo reseteamos a 'unknown' por default.
+	if req.LockState != "" {
+		newLockState := models.LockState(req.LockState)
+		if newLockState == models.LockStateLocked ||
+			newLockState == models.LockStateUnlocked ||
+			newLockState == models.LockStateUnknown {
+			if scooter.LockState != newLockState {
+				scooter.LockState = newLockState
+				now := time.Now()
+				scooter.LockStateUpdatedAt = &now
+			}
+		}
+	}
+
 	if err := postgres.GDB.Save(&scooter).Error; err != nil {
 		return fmt.Errorf("error updating scooter: %w", err)
 	}
@@ -80,6 +100,7 @@ func ProcessLocationUpdate(scooterID uint, req UpdateScooterLocationRequest) err
 			"longitude":     req.Longitude,
 			"battery_level": req.BatteryLevel,
 			"status":        scooter.Status,
+			"lock_state":    scooter.LockState,
 			"timestamp":     time.Now().Format(time.RFC3339),
 		},
 	}
