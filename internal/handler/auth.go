@@ -218,7 +218,5 @@ func MeHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toUserPayload(user))
 }
 
-func ForgotPasswordHandler(w http.ResponseWriter, r *http.Request) {
-	// Placeholder: en producción enviaría un email
-	writeJSON(w, http.StatusOK, map[string]string{"message": "if the email exists, a reset link was sent"})
-}
+// ForgotPasswordHandler y ResetPasswordHandler se implementan en password_reset.go
+// (SES + tokens en tabla password_resets).
