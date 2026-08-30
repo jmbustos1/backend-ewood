@@ -23,6 +23,9 @@ func NewRouter() http.Handler {
 	r.HandleFunc("/auth/login", handler.LoginHandler).Methods("POST")
 	r.HandleFunc("/auth/refresh", handler.RefreshTokenHandler).Methods("POST")
 	r.HandleFunc("/auth/forgot-password", handler.ForgotPasswordHandler).Methods("POST")
+	r.HandleFunc("/auth/reset-password", handler.ResetPasswordHandler).Methods("POST")
+	// Fallback web para el link del email (formulario HTML simple)
+	r.HandleFunc("/reset-password", handler.ResetPasswordPageHandler).Methods("GET")
 
 	// Ciudades (público — necesario en onboarding antes de login)
 	r.HandleFunc("/api/cities", handler.ListCitiesHandler).Methods("GET")
