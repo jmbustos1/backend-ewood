@@ -51,6 +51,16 @@ resource "aws_iam_policy" "ec2_policy" {
           "${var.s3_bucket_arn}",
           "${var.s3_bucket_arn}/*"
         ]
+      },
+      # Permite al backend enviar emails via SES (password recovery,
+      # confirmaciones, alertas). Sin API keys — usa el IAM role del EC2.
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = "*"
       }
     ]
   })
