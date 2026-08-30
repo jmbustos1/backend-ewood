@@ -60,3 +60,13 @@ output "rds_password" {
   value       = var.db_password != "" ? null : random_password.db_password.result
   sensitive   = true
 }
+
+output "ses_domain_verified" {
+  description = "Estado de verificacion del dominio en SES (true cuando Route 53 propago los TXT)"
+  value       = aws_ses_domain_identity_verification.exwood.id != "" ? "verified" : "pending"
+}
+
+output "ses_dkim_tokens" {
+  description = "Tokens DKIM generados por SES (usados en los CNAME del dominio)"
+  value       = aws_ses_domain_dkim.exwood.dkim_tokens
+}

@@ -146,3 +146,90 @@ resource "aws_route53_record" "api" {
   ttl     = 300
   records = [aws_eip.backend.public_ip]
 }
+
+# ─── SES — envio de emails transaccionales ──────────────────────────────────
+# Uso principal: password recovery. Downstream: welcome emails, confirmaciones
+# de recarga/viaje, alertas al team, notificaciones al operador.
+#
+# La cuenta AWS empieza en sandbox (solo emails a addresses verificadas). Para
+# salir del sandbox hay que solicitar "production access" desde consola SES.
+# Ver docs/SES_SETUP.md.
+
+resource "aws_ses_domain_identity" "exwood" {
+  domain = "exwood.dev"
+}
+
+resource "aws_ses_domain_dkim" "exwood" {
+  domain = aws_ses_domain_identity.exwood.domain
+}
+
+# 3 records CNAME de DKIM (AWS genera los tokens). Prueban propiedad del
+# dominio y firman cada email para que Gmail/Outlook no los manden a spam.
+resource "aws_route53_record" "ses_dkim" {
+  count   = 3
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${aws_ses_domain_dkim.exwood.dkim_tokens[count.index]}._domainkey.exwood.dev"
+  type    = "CNAME"
+  ttl     = 600
+  records = ["${aws_ses_domain_dkim.exwood.dkim_tokens[count.index]}.dkim.amazonses.com"]
+}
+
+# SPF: declara que amazonses.com esta autorizado a enviar mails con From: @exwood.dev.
+resource "aws_route53_record" "ses_spf" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "exwood.dev"
+  type    = "TXT"
+  ttl     = 600
+  records = ["v=spf1 include:amazonses.com ~all"]
+}
+
+# DMARC: politica de que hacer cuando falle SPF/DKIM. p=none = solo reportar,
+# no rechazar (modo observacion). Cuando confirmes que los mails llegan bien,
+# subir a p=quarantine (spam) o p=reject.
+resource "aws_route53_record" "ses_dmarc" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "_dmarc.exwood.dev"
+  type    = "TXT"
+  ttl     = 600
+  records = ["v=DMARC1; p=none; rua=mailto:contacto@exwood.cl"]
+}
+
+# Verificacion del dominio: SES chequea que exista el TXT que le pide.
+resource "aws_route53_record" "ses_verification" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "_amazonses.exwood.dev"
+  type    = "TXT"
+  ttl     = 600
+  records = [aws_ses_domain_identity.exwood.verification_token]
+}
+
+# Output del status de verificacion (Verified aparece tras propagar los TXT ~10 min)
+resource "aws_ses_domain_identity_verification" "exwood" {
+  domain     = aws_ses_domain_identity.exwood.id
+  depends_on = [aws_route53_record.ses_verification]
+
+  # Aumentar timeout porque a veces la primera verificacion tarda >5 min.
+  timeouts {
+    create = "20m"
+  }
+}
+
+# ─── Emails verificados para SES sandbox ────────────────────────────────────
+# Mientras SES este en sandbox, solo se pueden enviar mails a emails
+# verificados manualmente. AWS manda un mail a cada address con un link
+# de confirmacion — el owner tiene que hacer click.
+# Cuando salga del sandbox (production access aprobado), este bloque se
+# puede eliminar y SES enviara a cualquier destinatario.
+variable "sandbox_verified_emails" {
+  description = "Lista de emails a verificar en SES sandbox (para testing)"
+  type        = list(string)
+  default = [
+    "test@exwood.cl",
+    "josebm78@gmail.com",
+  ]
+}
+
+resource "aws_ses_email_identity" "sandbox" {
+  for_each = toset(var.sandbox_verified_emails)
+  email    = each.key
+}
