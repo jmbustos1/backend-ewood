@@ -90,12 +90,24 @@ func CreateScooterHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListScootersHandler lista todos los scooters, con filtro opcional por city_id
+// ListScootersHandler lista scooters disponibles para arrendar.
+// Filtros:
+//   ?city_id=X       filtra por ciudad
+//   ?status=all      devuelve TODOS los status (uso admin/debug)
+//   sin ?status      devuelve solo status='available' (default para mapa de usuarios)
+//
+// El filtro default por 'available' evita que scooters ya arrendados (in_use)
+// u offline aparezcan en el mapa de otros usuarios.
 func ListScootersHandler(w http.ResponseWriter, r *http.Request) {
 	query := postgres.GDB.Where("deleted_at IS NULL")
 
 	if cityID := r.URL.Query().Get("city_id"); cityID != "" {
 		query = query.Where("city_id = ?", cityID)
+	}
+
+	// Default: solo scooters available. ?status=all para bypassear (uso admin).
+	if r.URL.Query().Get("status") != "all" {
+		query = query.Where("status = ?", models.ScooterStatusAvailable)
 	}
 
 	scooters := make([]models.Scooter, 0)
