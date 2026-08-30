@@ -27,6 +27,11 @@ func NewRouter() http.Handler {
 	// Fallback web para el link del email (formulario HTML simple)
 	r.HandleFunc("/reset-password", handler.ResetPasswordPageHandler).Methods("GET")
 
+	// Paginas legales (requeridas por Play Store, linkeadas desde la app)
+	r.HandleFunc("/privacy", handler.PrivacyPolicyHandler).Methods("GET")
+	r.HandleFunc("/terms", handler.TermsHandler).Methods("GET")
+	r.HandleFunc("/delete-account", handler.DeleteAccountPageHandler).Methods("GET")
+
 	// Ciudades (público — necesario en onboarding antes de login)
 	r.HandleFunc("/api/cities", handler.ListCitiesHandler).Methods("GET")
 
