@@ -35,6 +35,9 @@ func NewRouter() http.Handler {
 	// Ciudades (público — necesario en onboarding antes de login)
 	r.HandleFunc("/api/cities", handler.ListCitiesHandler).Methods("GET")
 
+	// Config pública (tarifa, IVA, versión mínima) — consumido por mobile al abrir app
+	r.HandleFunc("/api/config", handler.ConfigHandler).Methods("GET")
+
 	// IoT — actualización de ubicación (protegida por device secret en producción)
 	r.HandleFunc("/api/scooters/{id}/location", handler.UpdateScooterLocationHandler).Methods("POST")
 
