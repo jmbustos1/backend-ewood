@@ -55,25 +55,32 @@ func getPricePerMinute() float64 {
 
 // tripCostBreakdown representa el desglose de cobro de un viaje.
 type tripCostBreakdown struct {
-	Subtotal  float64
-	TaxAmount float64
-	Total     float64
+	MinutesCharged int
+	PricePerMinute float64
+	Subtotal       float64
+	TaxAmount      float64
+	Total          float64
 }
 
 // calculateTripCost calcula el desglose de costo de un viaje según su duración.
 // Cobra por minuto iniciado (ceil) — un viaje de 1m1s cuesta 2 minutos.
 // Subtotal = minutos × precio_neto.  IVA = subtotal × 19%.  Total = subtotal + IVA.
+// Montos redondeados a pesos enteros (CLP no tiene decimales).
+// Mobile replica esta fórmula en src/domain/usecases/calculateTripCost.ts.
 func calculateTripCost(durationSeconds int) tripCostBreakdown {
+	price := getPricePerMinute()
 	if durationSeconds <= 0 {
-		return tripCostBreakdown{}
+		return tripCostBreakdown{PricePerMinute: price}
 	}
-	minutes := math.Ceil(float64(durationSeconds) / 60.0)
-	subtotal := minutes * getPricePerMinute()
-	tax := math.Round(subtotal*ivaRate*100) / 100
+	minutes := int(math.Ceil(float64(durationSeconds) / 60.0))
+	subtotal := math.Round(float64(minutes) * price)
+	tax := math.Round(subtotal * ivaRate)
 	return tripCostBreakdown{
-		Subtotal:  subtotal,
-		TaxAmount: tax,
-		Total:     subtotal + tax,
+		MinutesCharged: minutes,
+		PricePerMinute: price,
+		Subtotal:       subtotal,
+		TaxAmount:      tax,
+		Total:          subtotal + tax,
 	}
 }
 
@@ -401,6 +408,8 @@ func EndTripHandler(w http.ResponseWriter, r *http.Request) {
 		"trip":               trip,
 		"duration_formatted": formatDuration(durationSecs),
 		"distance_formatted": formatDistance(distanceMeters),
+		"minutes_charged":    costBreakdown.MinutesCharged,
+		"price_per_minute":   costBreakdown.PricePerMinute,
 		"subtotal":           costBreakdown.Subtotal,
 		"tax_amount":         costBreakdown.TaxAmount,
 		"tax_rate":           ivaRate,
