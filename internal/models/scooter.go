@@ -71,12 +71,37 @@ func (s *Scooter) IsInUse() bool {
 	return s.Status == ScooterStatusInUse
 }
 
-// UpdateLocation actualiza la última ubicación conocida del scooter
-func (s *Scooter) UpdateLocation(latitude, longitude float64, batteryLevel int) {
+// IsNoFix retorna true si las coordenadas son las que envía el firmware cuando
+// el GPS no tiene fix (0,0).
+func IsNoFix(latitude, longitude float64) bool {
+	return latitude == 0 && longitude == 0
+}
+
+// HasValidFix retorna true si el scooter tiene guardada una posición GPS real.
+func (s *Scooter) HasValidFix() bool {
+	return s.LastLatitude != nil && s.LastLongitude != nil &&
+		!IsNoFix(*s.LastLatitude, *s.LastLongitude)
+}
+
+// UpdateLocation actualiza la última ubicación conocida del scooter y retorna
+// true si la posición cambió.
+//
+// Si llega 0,0 (sin fix) y el scooter ya tenía una posición real, se conserva
+// la anterior: operadores necesitan la última posición conocida (T-0060).
+// Un scooter "virgen" (nunca tuvo fix) sí acepta el 0,0.
+// La batería se actualiza siempre. LastLocationUpdatedAt es la hora del
+// último fix real.
+func (s *Scooter) UpdateLocation(latitude, longitude float64, batteryLevel int) bool {
+	s.BatteryLevel = batteryLevel
+
+	if IsNoFix(latitude, longitude) && s.HasValidFix() {
+		return false
+	}
+
 	now := time.Now()
 	s.LastLatitude = &latitude
 	s.LastLongitude = &longitude
 	s.LastLocationUpdatedAt = &now
-	s.BatteryLevel = batteryLevel
+	return true
 }
 

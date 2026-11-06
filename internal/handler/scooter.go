@@ -46,8 +46,19 @@ func ProcessLocationUpdate(scooterID uint, req UpdateScooterLocationRequest) err
 		return fmt.Errorf("database error: %w", err)
 	}
 
-	// Actualizar ubicación
-	scooter.UpdateLocation(req.Latitude, req.Longitude, req.BatteryLevel)
+	// Actualizar ubicación (conserva la última posición real si llega 0,0)
+	positionChanged := scooter.UpdateLocation(req.Latitude, req.Longitude, req.BatteryLevel)
+
+	// Solo columnas de telemetría: un Save() de la fila completa pisaría
+	// status/current_trip_id si un viaje se inicia o cierra en paralelo.
+	updates := map[string]interface{}{
+		"battery_level": scooter.BatteryLevel,
+	}
+	if positionChanged {
+		updates["last_latitude"] = scooter.LastLatitude
+		updates["last_longitude"] = scooter.LastLongitude
+		updates["last_location_updated_at"] = scooter.LastLocationUpdatedAt
+	}
 
 	// Actualizar lock_state si viene en el request y es un valor conocido.
 	// Los scooters que aun no reportan (firmware viejo o SYS STATUS no recibido)
@@ -61,43 +72,50 @@ func ProcessLocationUpdate(scooterID uint, req UpdateScooterLocationRequest) err
 				scooter.LockState = newLockState
 				now := time.Now()
 				scooter.LockStateUpdatedAt = &now
+				updates["lock_state"] = scooter.LockState
+				updates["lock_state_updated_at"] = scooter.LockStateUpdatedAt
 			}
 		}
 	}
 
-	if err := postgres.GDB.Save(&scooter).Error; err != nil {
+	if err := postgres.GDB.Model(&scooter).Updates(updates).Error; err != nil {
 		return fmt.Errorf("error updating scooter: %w", err)
 	}
 
-	// Guardar ubicación histórica (punto clave)
-	location := models.ScooterLocation{
-		ScooterID:   scooter.ID,
-		Latitude:    req.Latitude,
-		Longitude:   req.Longitude,
-		EventType:   models.LocationEventPeriodicUpdate,
-		BatteryLevel: &req.BatteryLevel,
-		SpeedKmh:    req.SpeedKmh,
-		RecordedAt:  time.Now(),
+	// Guardar ubicación histórica (punto clave). Los 0,0 sin fix no se guardan:
+	// ensucian el recorrido del viaje.
+	if !models.IsNoFix(req.Latitude, req.Longitude) {
+		location := models.ScooterLocation{
+			ScooterID:    scooter.ID,
+			Latitude:     req.Latitude,
+			Longitude:    req.Longitude,
+			EventType:    models.LocationEventPeriodicUpdate,
+			BatteryLevel: &req.BatteryLevel,
+			SpeedKmh:     req.SpeedKmh,
+			RecordedAt:   time.Now(),
+		}
+
+		if scooter.CurrentTripID != nil {
+			location.TripID = scooter.CurrentTripID
+		}
+
+		if err := postgres.GDB.Create(&location).Error; err != nil {
+			// No fallar si no se puede guardar la ubicación histórica
+			fmt.Printf("⚠️  Error guardando ubicación histórica: %v\n", err)
+		}
 	}
 
-	if scooter.CurrentTripID != nil {
-		location.TripID = scooter.CurrentTripID
-	}
-
-	if err := postgres.GDB.Create(&location).Error; err != nil {
-		// No fallar si no se puede guardar la ubicación histórica
-		fmt.Printf("⚠️  Error guardando ubicación histórica: %v\n", err)
-	}
-
-	// Publicar actualización por WebSocket
+	// Publicar actualización por WebSocket con la posición guardada (no el 0,0
+	// crudo), para que el mapa no pierda el scooter mientras no tiene fix.
+	// UpdateLocation garantiza que LastLatitude/LastLongitude no son nil aquí.
 	wsMessage := map[string]interface{}{
 		"type": "location_update",
 		"scooter_id": scooter.ID,
 		"data": map[string]interface{}{
 			"id":            scooter.ID,
 			"code":          scooter.Code,
-			"latitude":      req.Latitude,
-			"longitude":     req.Longitude,
+			"latitude":      *scooter.LastLatitude,
+			"longitude":     *scooter.LastLongitude,
 			"battery_level": req.BatteryLevel,
 			"status":        scooter.Status,
 			"lock_state":    scooter.LockState,

@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -354,7 +355,15 @@ func EndTripHandler(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	durationSecs := int(now.Sub(trip.StartedAt).Seconds())
-	distanceMeters := haversine(trip.StartLatitude, trip.StartLongitude, req.Lat, req.Lng)
+	phoneHasFix := !models.IsNoFix(req.Lat, req.Lng) &&
+		req.Lat >= -90 && req.Lat <= 90 && req.Lng >= -180 && req.Lng <= 180
+
+	// Si el viaje partió sin fix (0,0), la distancia contra el teléfono sería
+	// absurda (miles de km): se deja en 0.
+	distanceMeters := 0.0
+	if phoneHasFix && !models.IsNoFix(trip.StartLatitude, trip.StartLongitude) {
+		distanceMeters = haversine(trip.StartLatitude, trip.StartLongitude, req.Lat, req.Lng)
+	}
 	costBreakdown := calculateTripCost(durationSecs)
 
 	tx := postgres.GDB.Begin()
@@ -371,12 +380,25 @@ func EndTripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.Model(&models.Scooter{}).Where("id = ?", trip.ScooterID).Updates(map[string]interface{}{
+	scooterUpdates := map[string]interface{}{
 		"status":          models.ScooterStatusAvailable,
 		"current_user_id": nil,
 		"current_trip_id": nil,
 		"trip_started_at": nil,
-	}).Error; err != nil {
+	}
+
+	// Si el scooter no tiene fix GPS, usar la posición del teléfono: el usuario
+	// lo deja justo ahí, así queda visible en el mapa donde lo dejaron.
+	var scooter models.Scooter
+	if err := tx.Select("id", "last_latitude", "last_longitude").First(&scooter, trip.ScooterID).Error; err == nil &&
+		!scooter.HasValidFix() && phoneHasFix {
+		scooterUpdates["last_latitude"] = req.Lat
+		scooterUpdates["last_longitude"] = req.Lng
+		scooterUpdates["last_location_updated_at"] = now
+		log.Printf("📍 Scooter %d sin fix GPS: se guarda la posición del teléfono al cerrar el viaje %d", trip.ScooterID, trip.ID)
+	}
+
+	if err := tx.Model(&models.Scooter{}).Where("id = ?", trip.ScooterID).Updates(scooterUpdates).Error; err != nil {
 		tx.Rollback()
 		writeError(w, http.StatusInternalServerError, "could_not_release_scooter")
 		return
