@@ -30,15 +30,68 @@ type PendingCommand struct {
 	CommandType       string
 	ClientID          string // ID del cliente WebSocket (opcional)
 	RequestID         string // ID único de la petición (opcional)
-	Done              chan struct{} // se cierra cuando llega ACK o falla (para espera asíncrona)
+	Done              chan struct{} // se cierra UNA vez cuando el comando termina (ACK, fallo, expirado o abandonado)
+
+	finished atomic.Bool // true cuando el comando terminó; no se reenvía ni reintenta
+	acked    atomic.Bool // true si terminó por ACK real del scooter
 }
 
-// CommandQueue gestiona la cola de comandos para un scooter
+// CommandQueue gestiona la cola de comandos para un scooter.
+//
+// queue nunca se cierra con close(): escribir en un canal cerrado hace panic
+// y tumba el proceso entero (incidente 2026-11-06 02:44 UTC). Para detener la
+// cola se cierra closed, que el worker y los productores consultan.
 type CommandQueue struct {
-	queue          chan *PendingCommand
-	pendingCommands map[uint64]*PendingCommand // message_id -> comando
-	mu             sync.RWMutex
+	queue            chan *PendingCommand
+	pendingCommands  map[uint64]*PendingCommand // message_id -> comando
+	mu               sync.RWMutex
 	messageIDCounter uint64
+	closed           chan struct{}
+	closeOnce        sync.Once
+}
+
+func newCommandQueue() *CommandQueue {
+	return &CommandQueue{
+		queue:           make(chan *PendingCommand, 100), // Buffer de 100 comandos
+		pendingCommands: make(map[uint64]*PendingCommand),
+		closed:          make(chan struct{}),
+	}
+}
+
+// stop señala que la cola no recibe más comandos. Idempotente.
+func (q *CommandQueue) stop() {
+	q.closeOnce.Do(func() { close(q.closed) })
+}
+
+// finish termina un comando exactamente una vez: lo saca de pendientes, marca
+// si fue ACK y cierra Done. Retorna false si ya estaba terminado.
+func (q *CommandQueue) finish(cmd *PendingCommand, acked bool) bool {
+	if !cmd.finished.CompareAndSwap(false, true) {
+		return false
+	}
+	if acked {
+		cmd.acked.Store(true)
+	}
+	q.mu.Lock()
+	delete(q.pendingCommands, cmd.MessageID)
+	q.mu.Unlock()
+	if cmd.Done != nil {
+		close(cmd.Done)
+	}
+	return true
+}
+
+// failAll termina como fallidos todos los comandos pendientes (al desconectar).
+func (q *CommandQueue) failAll() {
+	q.mu.RLock()
+	cmds := make([]*PendingCommand, 0, len(q.pendingCommands))
+	for _, cmd := range q.pendingCommands {
+		cmds = append(cmds, cmd)
+	}
+	q.mu.RUnlock()
+	for _, cmd := range cmds {
+		q.finish(cmd, false)
+	}
 }
 
 // TCPConnectionManager gestiona las conexiones TCP activas de los scooters
@@ -102,12 +155,10 @@ func (m *TCPConnectionManager) RegisterConnection(scooterID uint, conn net.Conn)
 
 	// Crear cola de comandos si no existe
 	if _, exists := m.commandQueues[scooterID]; !exists {
-		m.commandQueues[scooterID] = &CommandQueue{
-			queue:           make(chan *PendingCommand, 100), // Buffer de 100 comandos
-			pendingCommands: make(map[uint64]*PendingCommand),
-		}
+		queue := newCommandQueue()
+		m.commandQueues[scooterID] = queue
 		// Iniciar goroutine para procesar la cola
-		go m.processCommandQueue(scooterID)
+		go m.processCommandQueue(scooterID, queue)
 	}
 
 	log.Printf("✅ Scooter %d registrado (conexión desde %s). Total activos: %d", scooterID, remoteAddr, len(m.activeConnections))
@@ -129,18 +180,20 @@ func (m *TCPConnectionManager) UpdateLastActivity(scooterID uint) {
 	}
 }
 
-// UnregisterConnection elimina una conexión del mapa
-func (m *TCPConnectionManager) UnregisterConnection(scooterID uint) {
+// UnregisterConnection elimina la conexión del mapa solo si sigue siendo conn.
+// Si el scooter ya se reconectó con un socket nuevo, la goroutine del socket
+// viejo no debe tumbar la conexión nueva (T-0060).
+func (m *TCPConnectionManager) UnregisterConnection(scooterID uint, conn net.Conn) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if conn, exists := m.activeConnections[scooterID]; exists {
+	if c, exists := m.activeConnections[scooterID]; exists && c.Conn == conn {
 		delete(m.activeConnections, scooterID)
 		log.Printf("❌ Scooter %d desconectado. Total activos: %d", scooterID, len(m.activeConnections))
-		
-		// Cerrar cola de comandos si existe
+
+		// Detener la cola: el worker termina y falla los comandos pendientes
 		if queue, queueExists := m.commandQueues[scooterID]; queueExists {
-			close(queue.queue)
+			queue.stop()
 			delete(m.commandQueues, scooterID)
 		}
 		
@@ -148,9 +201,9 @@ func (m *TCPConnectionManager) UnregisterConnection(scooterID uint) {
 		m.notifyScooterStatus(scooterID, "offline")
 		
 		// Cerrar conexión
-		conn.mu.Lock()
-		conn.Conn.Close()
-		conn.mu.Unlock()
+		c.mu.Lock()
+		c.Conn.Close()
+		c.mu.Unlock()
 	}
 }
 
@@ -195,20 +248,15 @@ func (m *TCPConnectionManager) ProcessACK(scooterID uint, ackData map[string]int
 		}
 	}
 
-	// Buscar y remover comando pendiente
-	queue.mu.Lock()
+	// Buscar y terminar el comando pendiente (notifica a SendToScooterAndWaitACK)
+	queue.mu.RLock()
 	cmd, cmdExists := queue.pendingCommands[messageID]
-	if cmdExists {
-		delete(queue.pendingCommands, messageID)
-	}
-	queue.mu.Unlock()
+	queue.mu.RUnlock()
 
-	if cmdExists && cmd.Done != nil {
-		close(cmd.Done) // notificar a quien espera (SendToScooterAndWaitACK)
-	}
-
-	if !cmdExists {
-		log.Printf("⚠️  ACK recibido para comando desconocido (scooter %d, message_id: %d, request_id: %s)", 
+	if !cmdExists || !queue.finish(cmd, true) {
+		// Comando desconocido o ya terminado (p. ej. abandonado por timeout).
+		// Si era un unlock abandonado, el scooter pudo quedar desbloqueado sin viaje.
+		log.Printf("⚠️  ACK recibido para comando desconocido o ya terminado (scooter %d, message_id: %d, request_id: %s)",
 			scooterID, messageID, requestID)
 		return
 	}
@@ -253,23 +301,17 @@ func (m *TCPConnectionManager) cleanupExpiredCommands() {
 
 		now := time.Now()
 		for scooterID, queue := range queues {
-			queue.mu.Lock()
-			var expiredIDs []uint64
+			queue.mu.RLock()
 			var expiredCmds []*PendingCommand
-			for messageID, cmd := range queue.pendingCommands {
+			for _, cmd := range queue.pendingCommands {
 				if now.Sub(cmd.SentAt) > (m.ackTimeout * 2) {
-					expiredIDs = append(expiredIDs, messageID)
 					expiredCmds = append(expiredCmds, cmd)
 				}
 			}
-			for _, messageID := range expiredIDs {
-				delete(queue.pendingCommands, messageID)
-				log.Printf("⏱️  Comando expirado removido (scooter %d, message_id: %d)", scooterID, messageID)
-			}
-			queue.mu.Unlock()
+			queue.mu.RUnlock()
 			for _, cmd := range expiredCmds {
-				if cmd.Done != nil {
-					close(cmd.Done)
+				if queue.finish(cmd, false) {
+					log.Printf("⏱️  Comando expirado removido (scooter %d, message_id: %d)", scooterID, cmd.MessageID)
 				}
 			}
 		}
@@ -280,17 +322,26 @@ func (m *TCPConnectionManager) cleanupExpiredCommands() {
 // Retorna el message_id asignado (para correlación/espera de ACK).
 // clientID y requestID son opcionales para correlación con clientes WebSocket.
 func (m *TCPConnectionManager) SendToScooter(scooterID uint, message []byte, clientID, requestID string) (uint64, error) {
+	cmd, _, err := m.enqueue(scooterID, message, clientID, requestID)
+	if err != nil {
+		return 0, err
+	}
+	return cmd.MessageID, nil
+}
+
+// enqueue arma el comando con message_id y lo agrega a la cola del scooter.
+func (m *TCPConnectionManager) enqueue(scooterID uint, message []byte, clientID, requestID string) (*PendingCommand, *CommandQueue, error) {
 	m.mu.RLock()
 	_, exists := m.activeConnections[scooterID]
 	queue, queueExists := m.commandQueues[scooterID]
 	m.mu.RUnlock()
 
 	if !exists {
-		return 0, fmt.Errorf("scooter %d no está conectado", scooterID)
+		return nil, nil, fmt.Errorf("scooter %d no está conectado", scooterID)
 	}
 
 	if !queueExists {
-		return 0, fmt.Errorf("cola de comandos no inicializada para scooter %d", scooterID)
+		return nil, nil, fmt.Errorf("cola de comandos no inicializada para scooter %d", scooterID)
 	}
 
 	// Parsear el mensaje para extraer información del comando
@@ -304,7 +355,7 @@ func (m *TCPConnectionManager) SendToScooter(scooterID uint, message []byte, cli
 
 	// Generar message_id único
 	messageID := atomic.AddUint64(&queue.messageIDCounter, 1)
-	
+
 	// Agregar message_id y timestamp al mensaje
 	if cmdData == nil {
 		cmdData = make(map[string]interface{})
@@ -312,7 +363,7 @@ func (m *TCPConnectionManager) SendToScooter(scooterID uint, message []byte, cli
 	}
 	cmdData["message_id"] = messageID
 	cmdData["timestamp"] = time.Now().Format(time.RFC3339)
-	
+
 	// Agregar client_id y request_id si están disponibles
 	if clientID != "" {
 		cmdData["client_id"] = clientID
@@ -320,20 +371,14 @@ func (m *TCPConnectionManager) SendToScooter(scooterID uint, message []byte, cli
 	if requestID != "" {
 		cmdData["request_id"] = requestID
 	}
-	
+
 	// Re-serializar el mensaje con message_id
 	messageWithID, err := json.Marshal(cmdData)
 	if err != nil {
-		return 0, fmt.Errorf("error serializando mensaje: %w", err)
+		return nil, nil, fmt.Errorf("error serializando mensaje: %w", err)
 	}
 
-	// Si el caller va a esperar ACK (tiene requestID), creamos canal para notificación asíncrona
-	var doneCh chan struct{}
-	if requestID != "" {
-		doneCh = make(chan struct{})
-	}
-
-	// Crear comando pendiente
+	// Crear comando pendiente. Done siempre existe: finish() lo cierra una vez.
 	pendingCmd := &PendingCommand{
 		MessageID:         messageID,
 		Command:           messageWithID,
@@ -344,7 +389,7 @@ func (m *TCPConnectionManager) SendToScooter(scooterID uint, message []byte, cli
 		CommandType:       commandType,
 		ClientID:          clientID,
 		RequestID:         requestID,
-		Done:              doneCh,
+		Done:              make(chan struct{}),
 	}
 
 	// Agregar al mapa de comandos pendientes INMEDIATAMENTE (antes de enviar a cola)
@@ -352,116 +397,102 @@ func (m *TCPConnectionManager) SendToScooter(scooterID uint, message []byte, cli
 	queue.pendingCommands[messageID] = pendingCmd
 	queue.mu.Unlock()
 
-	// Agregar a la cola
+	// Agregar a la cola (nunca está cerrada con close(), ver CommandQueue)
 	select {
+	case <-queue.closed:
+		queue.finish(pendingCmd, false)
+		return nil, nil, fmt.Errorf("scooter %d no está conectado", scooterID)
 	case queue.queue <- pendingCmd:
 		log.Printf("📤 Comando agregado a cola para scooter %d (message_id: %d, tipo: %s)", scooterID, messageID, commandType)
-		return messageID, nil
+		return pendingCmd, queue, nil
 	default:
-		queue.mu.Lock()
-		delete(queue.pendingCommands, messageID)
-		queue.mu.Unlock()
-		if doneCh != nil {
-			close(doneCh)
-		}
-		return 0, fmt.Errorf("cola de comandos llena para scooter %d", scooterID)
+		queue.finish(pendingCmd, false)
+		return nil, nil, fmt.Errorf("cola de comandos llena para scooter %d", scooterID)
 	}
 }
 
 // SendToScooterAndWaitACK envía un mensaje y espera el ACK de forma asíncrona (canal, sin polling).
-// Retorna true si se recibió ACK, false si timeout.
+// Retorna true solo si llegó un ACK real. Si se agota timeout, el comando
+// queda abandonado: el worker no lo reintenta (evita, p. ej., un unlock
+// reenviado después de que el viaje ya se canceló).
 func (m *TCPConnectionManager) SendToScooterAndWaitACK(scooterID uint, message []byte, clientID, requestID string, timeout time.Duration) (bool, uint64, error) {
-	messageID, err := m.SendToScooter(scooterID, message, clientID, requestID)
+	cmd, queue, err := m.enqueue(scooterID, message, clientID, requestID)
 	if err != nil {
 		return false, 0, err
 	}
 
-	m.mu.RLock()
-	queue, exists := m.commandQueues[scooterID]
-	m.mu.RUnlock()
-	if !exists {
-		return false, 0, fmt.Errorf("cola de comandos no encontrada")
-	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	queue.mu.RLock()
-	cmd, ok := queue.pendingCommands[messageID]
-	var doneCh chan struct{}
-	if ok && cmd != nil {
-		doneCh = cmd.Done
-	}
-	queue.mu.RUnlock()
-
-	if doneCh == nil {
-		// Comando ya terminado (ACK muy rápido) o no encontrado
-		queue.mu.RLock()
-		_, stillPending := queue.pendingCommands[messageID]
-		queue.mu.RUnlock()
-		return !stillPending, messageID, nil
-	}
-
-	timeoutCh := time.After(timeout)
 	select {
-	case <-doneCh:
-		return true, messageID, nil
-	case <-timeoutCh:
-		return false, messageID, nil
+	case <-cmd.Done:
+		return cmd.acked.Load(), cmd.MessageID, nil
+	case <-timer.C:
+		if queue.finish(cmd, false) {
+			log.Printf("🛑 Comando abandonado tras %s sin ACK (scooter %d, message_id: %d, tipo: %s)",
+				timeout, scooterID, cmd.MessageID, cmd.CommandType)
+			return false, cmd.MessageID, nil
+		}
+		// Terminó justo al mismo tiempo (ACK o fallo)
+		return cmd.acked.Load(), cmd.MessageID, nil
 	}
 }
 
-// processCommandQueue procesa la cola de comandos para un scooter
-func (m *TCPConnectionManager) processCommandQueue(scooterID uint) {
-	m.mu.RLock()
-	queue := m.commandQueues[scooterID]
-	m.mu.RUnlock()
+// processCommandQueue procesa la cola de comandos de un scooter hasta que la
+// cola se detiene (desconexión).
+func (m *TCPConnectionManager) processCommandQueue(scooterID uint, queue *CommandQueue) {
+	for {
+		var cmd *PendingCommand
+		select {
+		case <-queue.closed:
+			queue.failAll()
+			return
+		case cmd = <-queue.queue:
+		}
 
-	if queue == nil {
-		return
-	}
-
-	for cmd := range queue.queue {
-		// Agregar a comandos pendientes
-		queue.mu.Lock()
-		queue.pendingCommands[cmd.MessageID] = cmd
-		queue.mu.Unlock()
+		// Abandonado, expirado o ya con ACK mientras esperaba en la cola
+		if cmd.finished.Load() {
+			continue
+		}
 
 		// Enviar comando y esperar ACK
-		ackReceived := m.sendCommandAndWaitACK(scooterID, cmd, queue)
-
-		if !ackReceived {
-			// Reintentar si no se recibió ACK
-			if cmd.RetryCount < m.maxRetries {
-				cmd.RetryCount++
-				log.Printf("🔄 Reintentando comando para scooter %d (message_id: %d, intento: %d/%d)", 
-					scooterID, cmd.MessageID, cmd.RetryCount, m.maxRetries)
-				
-				// Re-agregar a la cola
-				select {
-				case queue.queue <- cmd:
-				default:
-					log.Printf("❌ No se pudo reintentar comando: cola llena")
-				}
-			} else {
-				log.Printf("❌ Comando fallido después de %d intentos (scooter %d, message_id: %d)", 
-					m.maxRetries, scooterID, cmd.MessageID)
-				// Remover de pendientes y notificar a quien espera
-				queue.mu.Lock()
-				delete(queue.pendingCommands, cmd.MessageID)
-				queue.mu.Unlock()
-				if cmd.Done != nil {
-					close(cmd.Done)
-				}
-			}
-		} else {
-			// ACK recibido, remover de pendientes
-			queue.mu.Lock()
-			delete(queue.pendingCommands, cmd.MessageID)
-			queue.mu.Unlock()
+		if m.sendCommandAndWaitACK(scooterID, cmd, queue) {
 			log.Printf("✅ ACK recibido para comando (scooter %d, message_id: %d)", scooterID, cmd.MessageID)
+			continue
+		}
+
+		if cmd.finished.Load() {
+			log.Printf("🛑 Comando descartado, sin reintento (scooter %d, message_id: %d): abandonado, expirado o scooter desconectado",
+				scooterID, cmd.MessageID)
+			continue
+		}
+
+		if cmd.RetryCount >= m.maxRetries {
+			log.Printf("❌ Comando fallido después de %d intentos (scooter %d, message_id: %d)",
+				m.maxRetries, scooterID, cmd.MessageID)
+			queue.finish(cmd, false)
+			continue
+		}
+
+		cmd.RetryCount++
+		log.Printf("🔄 Reintentando comando para scooter %d (message_id: %d, intento: %d/%d)",
+			scooterID, cmd.MessageID, cmd.RetryCount, m.maxRetries)
+
+		// Re-agregar a la cola
+		select {
+		case <-queue.closed:
+			queue.finish(cmd, false)
+		case queue.queue <- cmd:
+		default:
+			log.Printf("❌ No se pudo reintentar comando: cola llena")
+			queue.finish(cmd, false)
 		}
 	}
 }
 
-// sendCommandAndWaitACK envía un comando y espera el ACK
+// sendCommandAndWaitACK envía un comando y espera el ACK. Retorna true solo
+// con ACK real; false por timeout, error de escritura, desconexión o si el
+// comando fue terminado por otro lado (abandonado/expirado).
 func (m *TCPConnectionManager) sendCommandAndWaitACK(scooterID uint, cmd *PendingCommand, queue *CommandQueue) bool {
 	m.mu.RLock()
 	conn, exists := m.activeConnections[scooterID]
@@ -474,10 +505,10 @@ func (m *TCPConnectionManager) sendCommandAndWaitACK(scooterID uint, cmd *Pendin
 	conn.mu.Lock()
 	// Agregar salto de línea al final del mensaje
 	messageWithNewline := append(cmd.Command, '\n')
-	
+
 	// Configurar timeout de escritura
 	conn.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	
+
 	_, err := conn.Conn.Write(messageWithNewline)
 	conn.mu.Unlock()
 
@@ -492,26 +523,14 @@ func (m *TCPConnectionManager) sendCommandAndWaitACK(scooterID uint, cmd *Pendin
 	timeout := time.NewTimer(m.ackTimeout)
 	defer timeout.Stop()
 
-	// Verificar periódicamente si llegó el ACK
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout.C:
-			log.Printf("⏱️  Timeout esperando ACK para comando (scooter %d, message_id: %d)", scooterID, cmd.MessageID)
-			return false
-		case <-ticker.C:
-			// Verificar si el comando ya fue marcado como ACK (se elimina del mapa)
-			queue.mu.RLock()
-			_, stillPending := queue.pendingCommands[cmd.MessageID]
-			queue.mu.RUnlock()
-			
-			if !stillPending {
-				// ACK recibido (el comando fue removido del mapa)
-				return true
-			}
-		}
+	select {
+	case <-cmd.Done:
+		return cmd.acked.Load()
+	case <-queue.closed:
+		return false
+	case <-timeout.C:
+		log.Printf("⏱️  Timeout esperando ACK para comando (scooter %d, message_id: %d)", scooterID, cmd.MessageID)
+		return false
 	}
 }
 
@@ -544,7 +563,7 @@ func (m *TCPConnectionManager) cleanupInactiveConnections() {
 	for range ticker.C {
 		m.mu.RLock()
 		now := time.Now()
-		inactiveScooters := make([]uint, 0)
+		inactive := make(map[uint]net.Conn)
 
 		for scooterID, conn := range m.activeConnections {
 			conn.mu.Lock()
@@ -552,15 +571,15 @@ func (m *TCPConnectionManager) cleanupInactiveConnections() {
 			conn.mu.Unlock()
 
 			if now.Sub(lastUpdate) > m.inactivityTimeout {
-				inactiveScooters = append(inactiveScooters, scooterID)
+				inactive[scooterID] = conn.Conn
 			}
 		}
 		m.mu.RUnlock()
 
-		// Desregistrar conexiones inactivas
-		for _, scooterID := range inactiveScooters {
+		// Desregistrar conexiones inactivas (solo si siguen siendo las mismas)
+		for scooterID, conn := range inactive {
 			log.Printf("⏱️  Scooter %d marcado como offline por inactividad", scooterID)
-			m.UnregisterConnection(scooterID)
+			m.UnregisterConnection(scooterID, conn)
 		}
 	}
 }

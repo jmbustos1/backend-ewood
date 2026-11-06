@@ -174,7 +174,7 @@ func handleTCPConnection(conn net.Conn) {
 
 	// Limpiar cuando la conexión se cierra
 	if currentScooterID != 0 && manager != nil {
-		manager.UnregisterConnection(currentScooterID)
+		manager.UnregisterConnection(currentScooterID, conn)
 	}
 
 	if err := scanner.Err(); err != nil {
