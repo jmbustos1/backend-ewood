@@ -48,3 +48,7 @@ Thumbs.db
 
 # Pruebas E2E contra producción (IPs, IDs de usuarios, logs de runs)
 pruebas/
+
+# Planes de Terraform: contienen el state completo, con secretos
+*.tfplan
+terraform/tfplan
