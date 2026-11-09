@@ -45,3 +45,6 @@ Thumbs.db
 
 # Claude skills locales (con credenciales)
 .claude/
+
+# Pruebas E2E contra producción (IPs, IDs de usuarios, logs de runs)
+pruebas/
