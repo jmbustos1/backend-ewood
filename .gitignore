@@ -52,3 +52,6 @@ pruebas/
 # Planes de Terraform: contienen el state completo, con secretos
 *.tfplan
 terraform/tfplan
+
+# Deuda técnica: vive en el repo privado exwood-bitacora (enlace simbólico)
+TECH_DEBT.md
