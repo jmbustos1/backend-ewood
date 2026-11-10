@@ -24,6 +24,9 @@ type TCPLocationRequest struct {
 	// frame SYS STATUS y lo reporta). Fuente de verdad del estado fisico
 	// del actuador.
 	LockState string `json:"lock_state,omitempty"`
+	// Diag: bloque de diagnostico del firmware (esp32ewood/docs/DIAGNOSTICO.md).
+	// Opcional: firmwares viejos no lo envian.
+	Diag json.RawMessage `json:"d,omitempty"`
 }
 
 // getDeviceSecret retorna el secret esperado de los dispositivos IoT.
@@ -161,6 +164,7 @@ func handleTCPConnection(conn net.Conn) {
 			BatteryLevel: tcpReq.BatteryLevel,
 			SpeedKmh:     tcpReq.SpeedKmh,
 			LockState:    tcpReq.LockState,
+			Diag:         tcpReq.Diag,
 		}
 
 		// Procesar actualización usando lógica compartida

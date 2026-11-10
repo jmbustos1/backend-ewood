@@ -23,6 +23,8 @@ type UpdateScooterLocationRequest struct {
 	// LockState del actuador reportado por el firmware. Valores esperados:
 	// "locked" | "unlocked" | "unknown". Fuente de verdad del estado fisico.
 	LockState string `json:"lock_state,omitempty"`
+	// Diag: bloque "d" de diagnostico del firmware (solo por TCP).
+	Diag json.RawMessage `json:"d,omitempty"`
 }
 
 // ProcessLocationUpdate procesa una actualización de ubicación (lógica compartida)
@@ -76,6 +78,14 @@ func ProcessLocationUpdate(scooterID uint, req UpdateScooterLocationRequest) err
 				updates["lock_state_updated_at"] = scooter.LockStateUpdatedAt
 			}
 		}
+	}
+
+	if diag, ok := parseDiag(req.Diag); ok {
+		logDiagChanges(scooter.ID, scooter.LastDiag, diag)
+		raw := string(req.Diag)
+		now := time.Now()
+		updates["last_diag"] = raw
+		updates["last_diag_at"] = now
 	}
 
 	if err := postgres.GDB.Model(&scooter).Updates(updates).Error; err != nil {

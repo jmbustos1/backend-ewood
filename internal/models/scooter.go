@@ -43,6 +43,10 @@ type Scooter struct {
 	TripStartedAt        *time.Time     `json:"trip_started_at,omitempty"`
 	LockState            LockState      `gorm:"type:varchar(16);default:'unknown'" json:"lock_state"`
 	LockStateUpdatedAt   *time.Time     `json:"lock_state_updated_at,omitempty"`
+	// Ultimo bloque de diagnostico del firmware ("d" de la telemetria), tal
+	// cual llego. Ver esp32ewood/docs/DIAGNOSTICO.md. No se expone en la API.
+	LastDiag             *string        `gorm:"type:jsonb" json:"-"`
+	LastDiagAt           *time.Time     `json:"-"`
 	CreatedAt            time.Time      `json:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at"`
 	DeletedAt            gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`

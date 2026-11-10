@@ -126,6 +126,8 @@ Scooter envia telemetria cada 5s con datos reales:
   → Juan (y todos) ven el scooter moverse en el mapa
 ```
 
+Desde 2026-11-10 la telemetría puede traer además un bloque `"d":{...}` de diagnóstico del firmware (versión, reinicios, estado de la FSM, GPS, BMS). El backend lo guarda en `scooters.last_diag` y lo registra en el log (`📟`) cuando cambia. Detalle de cada campo: `esp32ewood/docs/DIAGNOSTICO.md`.
+
 ### Paso 9 — Juan termina el arriendo
 
 ```
