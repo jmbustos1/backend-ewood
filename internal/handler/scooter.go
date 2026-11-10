@@ -3,8 +3,10 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"ewood-backend/internal/client/postgres"
@@ -49,7 +51,26 @@ func ProcessLocationUpdate(scooterID uint, req UpdateScooterLocationRequest) err
 	}
 
 	// Actualizar ubicación (conserva la última posición real si llega 0,0)
-	positionChanged := scooter.UpdateLocation(req.Latitude, req.Longitude, req.BatteryLevel)
+	// Fix imposible (salto de km en segundos): se descarta como posición y no
+	// entra al historial. Se compara contra el último fix recibido en memoria
+	// (no contra la base: la hora guardada depende de la zona horaria y la
+	// posición guardada puede venir del teléfono). Ver checkFix.
+	accepted, confirmed := checkFix(scooterID, req.Latitude, req.Longitude, time.Now())
+	implausible := !accepted
+	if confirmed {
+		log.Printf("📍 Scooter %d: salto confirmado por fixes consecutivos, se acepta (%.6f, %.6f)",
+			scooterID, req.Latitude, req.Longitude)
+	} else if implausible {
+		log.Printf("⚠️  Scooter %d: fix descartado por salto imposible (%.6f, %.6f)",
+			scooterID, req.Latitude, req.Longitude)
+	}
+
+	positionChanged := false
+	if implausible {
+		scooter.BatteryLevel = req.BatteryLevel // la batería se actualiza igual
+	} else {
+		positionChanged = scooter.UpdateLocation(req.Latitude, req.Longitude, req.BatteryLevel)
+	}
 
 	// Solo columnas de telemetría: un Save() de la fila completa pisaría
 	// status/current_trip_id si un viaje se inicia o cierra en paralelo.
@@ -94,7 +115,7 @@ func ProcessLocationUpdate(scooterID uint, req UpdateScooterLocationRequest) err
 
 	// Guardar ubicación histórica (punto clave). Los 0,0 sin fix no se guardan:
 	// ensucian el recorrido del viaje.
-	if !models.IsNoFix(req.Latitude, req.Longitude) {
+	if !models.IsNoFix(req.Latitude, req.Longitude) && !implausible {
 		location := models.ScooterLocation{
 			ScooterID:    scooter.ID,
 			Latitude:     req.Latitude,
@@ -188,4 +209,64 @@ func UpdateScooterLocationHandler(w http.ResponseWriter, r *http.Request) {
 		"message": "Location updated",
 		"scooter_id": scooterID,
 	})
+}
+
+// ── Filtro de saltos imposibles ─────────────────────────────────────────────
+
+// Se guarda en memoria el último fix aceptado de cada scooter. Un fix que
+// implica un salto imposible queda como sospechoso; si el siguiente fix cae
+// cerca del sospechoso, ambos describen la misma zona y el salto se acepta.
+// Los errores de lectura vistos en producción son puntos aislados, así que no
+// se confirman. Tras reiniciar el backend el primer fix de cada scooter se
+// acepta sin filtro.
+const (
+	suspectConfirmMeters = 200.0
+	suspectMaxAge        = 60 * time.Second
+)
+
+type trackedFix struct {
+	lat, lng float64
+	at       time.Time
+}
+
+type fixTrack struct {
+	last    trackedFix
+	suspect *trackedFix
+}
+
+var (
+	fixMu     sync.Mutex
+	fixTracks = map[uint]*fixTrack{}
+)
+
+// checkFix decide si se acepta un fix. accepted=false: descartar la posición.
+// confirmed=true: era un salto, confirmado por dos fixes consecutivos.
+func checkFix(scooterID uint, lat, lng float64, now time.Time) (accepted, confirmed bool) {
+	if models.IsNoFix(lat, lng) {
+		return true, false // el 0,0 lo maneja UpdateLocation
+	}
+
+	fixMu.Lock()
+	defer fixMu.Unlock()
+
+	cur := trackedFix{lat: lat, lng: lng, at: now}
+	t, ok := fixTracks[scooterID]
+	if !ok {
+		fixTracks[scooterID] = &fixTrack{last: cur}
+		return true, false
+	}
+
+	if !models.IsImplausibleJump(t.last.lat, t.last.lng, now.Sub(t.last.at), lat, lng) {
+		t.last, t.suspect = cur, nil
+		return true, false
+	}
+
+	if s := t.suspect; s != nil && now.Sub(s.at) <= suspectMaxAge &&
+		models.DistanceMeters(s.lat, s.lng, lat, lng) <= suspectConfirmMeters {
+		t.last, t.suspect = cur, nil
+		return true, true
+	}
+
+	t.suspect = &cur
+	return false, false
 }

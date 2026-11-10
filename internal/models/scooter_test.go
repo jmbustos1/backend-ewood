@@ -1,6 +1,9 @@
 package models
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func ptr(v float64) *float64 { return &v }
 
@@ -32,6 +35,31 @@ func TestUpdateLocation(t *testing.T) {
 			}
 			if *s.LastLatitude != tt.wantLat || *s.LastLongitude != tt.wantLng {
 				t.Errorf("pos = (%v, %v), want (%v, %v)", *s.LastLatitude, *s.LastLongitude, tt.wantLat, tt.wantLng)
+			}
+		})
+	}
+}
+
+func TestImplausibleJump(t *testing.T) {
+	const lat, lng = -36.797092, -73.059965
+	tests := []struct {
+		name     string
+		elapsed  time.Duration
+		lat, lng float64
+		want     bool
+	}{
+		{"drift de metros", 6 * time.Second, -36.797120, -73.060010, false},
+		{"lat sin minutos (prod 09/11)", 6 * time.Second, -36.000000, -73.059989, true},
+		{"lon sin signo (prod 09/11)", 6 * time.Second, -36.797110, 73.000000, true},
+		{"200 m en 6 s (bajo el umbral de distancia)", 6 * time.Second, -36.795300, -73.059965, false},
+		{"5 km en 6 s", 6 * time.Second, -36.752000, -73.059965, true},
+		{"5 km en 10 min (trasladado)", 10 * time.Minute, -36.752000, -73.059965, false},
+		{"0,0 no es salto", 6 * time.Second, 0, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsImplausibleJump(lat, lng, tt.elapsed, tt.lat, tt.lng); got != tt.want {
+				t.Errorf("IsImplausibleJump = %v, want %v", got, tt.want)
 			}
 		})
 	}
