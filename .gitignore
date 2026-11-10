@@ -17,6 +17,7 @@ go.work
 .env
 .env.push
 env.production
+env.production.bak*
 *.pem
 
 # Archivos generados por deploy

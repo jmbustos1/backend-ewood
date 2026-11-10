@@ -600,103 +600,23 @@ func (m *TCPConnectionManager) notifyScooterStatus(scooterID uint, status string
 	}
 }
 
-// HandleFrontendMessage procesa mensajes del frontend para enviar a scooters
+// HandleFrontendMessage procesa mensajes entrantes del WebSocket.
+//
+// El WebSocket es solo de lectura para los clientes (mapa en vivo). Antes
+// reenviaba "send_to_scooter" al scooter sin validar quién lo pedía, lo que
+// permitía a cualquier usuario autenticado desbloquear un scooter sin viaje ni
+// cobro. Los comandos a scooters pasan solo por los flujos de viaje
+// (StartTripHandler/EndTripHandler) o por el endpoint admin
+// POST /api/admin/scooters/{id}/command.
 func HandleFrontendMessage(messageData []byte) error {
 	var msg map[string]interface{}
 	if err := json.Unmarshal(messageData, &msg); err != nil {
 		return fmt.Errorf("error parseando mensaje del frontend: %w", err)
 	}
 
-	// Extraer client_id del mensaje (agregado automáticamente por ReadPump)
-	clientID, _ := msg["_client_id"].(string)
-	// Remover _client_id del mensaje antes de procesarlo
-	delete(msg, "_client_id")
-
-	action, ok := msg["action"].(string)
-	if !ok || action != "send_to_scooter" {
-		// No es un mensaje para enviar a un scooter, ignorar
-		return nil
+	if action, _ := msg["action"].(string); action == "send_to_scooter" {
+		clientID, _ := msg["_client_id"].(string)
+		log.Printf("🚫 WebSocket: send_to_scooter ignorado (cliente %s, scooter_id %v)", clientID, msg["scooter_id"])
 	}
-
-	// Obtener scooter_id
-	scooterIDFloat, ok := msg["scooter_id"].(float64)
-	if !ok {
-		return fmt.Errorf("scooter_id inválido o faltante")
-	}
-	scooterID := uint(scooterIDFloat)
-
-	// Obtener el mensaje a enviar
-	messageToSend, ok := msg["message"].(string)
-	if !ok {
-		// Si no es string, intentar convertir a JSON
-		messageBytes, err := json.Marshal(msg["message"])
-		if err != nil {
-			return fmt.Errorf("error serializando mensaje: %w", err)
-		}
-		messageToSend = string(messageBytes)
-	}
-
-	// Generar request_id único
-	requestID := fmt.Sprintf("req_%d_%d", scooterID, time.Now().UnixNano())
-
-	// Enviar mensaje al scooter con client_id y request_id
-	manager := GetTCPManager()
-	if manager == nil {
-		return fmt.Errorf("TCP manager no inicializado")
-	}
-
-	if _, err := manager.SendToScooter(scooterID, []byte(messageToSend), clientID, requestID); err != nil {
-		// Responder error al frontend (solo al cliente específico si hay client_id)
-		if clientID != "" {
-			if hub := GetWebSocketHub(); hub != nil {
-				errorMsg := map[string]interface{}{
-					"type":       "error",
-					"scooter_id": scooterID,
-					"request_id": requestID,
-					"error":      err.Error(),
-					"timestamp":  time.Now().Format(time.RFC3339),
-				}
-				hub.SendToClient(clientID, errorMsg)
-			}
-		} else {
-			// Si no hay client_id, hacer broadcast (fallback)
-			if hub := GetWebSocketHub(); hub != nil {
-				errorMsg := map[string]interface{}{
-					"type":       "error",
-					"scooter_id": scooterID,
-					"error":      err.Error(),
-					"timestamp":  time.Now().Format(time.RFC3339),
-				}
-				hub.BroadcastMessage(errorMsg)
-			}
-		}
-		return err
-	}
-
-	// Responder éxito al frontend (solo al cliente específico si hay client_id)
-	if clientID != "" {
-		if hub := GetWebSocketHub(); hub != nil {
-			successMsg := map[string]interface{}{
-				"type":       "message_sent",
-				"scooter_id": scooterID,
-				"request_id": requestID,
-				"status":     "success",
-				"timestamp":  time.Now().Format(time.RFC3339),
-			}
-			hub.SendToClient(clientID, successMsg)
-		}
-	} else {
-		// Si no hay client_id, hacer broadcast (fallback)
-		if hub := GetWebSocketHub(); hub != nil {
-			successMsg := map[string]interface{}{
-				"type":       "message_sent",
-				"scooter_id": scooterID,
-				"status":     "success",
-				"timestamp":  time.Now().Format(time.RFC3339),
-			}
-			hub.BroadcastMessage(successMsg)
-		}
-	}
-
 	return nil
 }

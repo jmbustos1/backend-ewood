@@ -187,6 +187,18 @@ Backend:
 
 ---
 
+## Canales de comando hacia un scooter (desde 2026-11-09)
+
+Un scooter solo recibe `unlock`/`lock` por tres caminos:
+
+1. `POST /api/trips` (Paso 4-5): unlock al iniciar el viaje.
+2. `PATCH /api/trips/{id}/end` (Paso 9): lock al terminar el viaje.
+3. `POST /api/admin/scooters/{id}/command`: comando de emergencia del equipo, con `X-Admin-Key`. No crea ni cierra viajes.
+
+El WebSocket es solo de lectura: un `send_to_scooter` de un cliente se ignora. El `client_id` de los ejemplos sigue existiendo para la sesión, pero hoy ningún comando lleva `client_id` porque no se originan en el WebSocket. Detalle y lista de comandos permitidos: [COMANDOS_EMERGENCIA.md](COMANDOS_EMERGENCIA.md).
+
+---
+
 ## Notas
 
 - **client_id** es por sesion WebSocket, no por usuario. Si Juan tiene 2 pestanas abiertas,

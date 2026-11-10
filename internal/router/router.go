@@ -43,6 +43,8 @@ func NewRouter() http.Handler {
 
 	// Admin
 	r.HandleFunc("/api/admin/scooters", handler.CreateScooterHandler).Methods("POST")
+	// Comandos de emergencia a un scooter (X-Admin-Key = ADMIN_COMMAND_KEY)
+	r.HandleFunc("/api/admin/scooters/{id}/command", handler.AdminScooterCommandHandler).Methods("POST")
 
 	// Webhook MercadoPago (público — MP llama desde sus servidores sin JWT).
 	// Seguridad: el handler verifica el pago contra la API de MP con nuestro
@@ -63,8 +65,8 @@ func NewRouter() http.Handler {
 	// Scooters
 	protected.HandleFunc("/api/scooters", handler.ListScootersHandler).Methods("GET")
 	protected.HandleFunc("/api/scooters/{id}", handler.GetScooterHandler).Methods("GET")
-	protected.HandleFunc("/api/scooters/{id}/unlock", handler.UnlockScooterHandler).Methods("POST")
-	protected.HandleFunc("/api/scooters/{id}/lock", handler.LockScooterHandler).Methods("POST")
+	// lock/unlock directos ya no existen para usuarios: solo vía viajes
+	// (POST /api/trips, PATCH /api/trips/{id}/end) o comando admin.
 
 	// Viajes
 	protected.HandleFunc("/api/trips", handler.StartTripHandler).Methods("POST")

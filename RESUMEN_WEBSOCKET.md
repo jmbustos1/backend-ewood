@@ -133,8 +133,9 @@ Deberías ver mensajes JSON apareciendo en la terminal del WebSocket cada 3 segu
 
 | Método | Endpoint | Descripción | Autenticación |
 |--------|----------|-------------|---------------|
-| `GET` | `/ws/scooters` | WebSocket para actualizaciones | No |
+| `GET` | `/ws/scooters` | WebSocket para actualizaciones (solo lectura: ignora `send_to_scooter`) | JWT (`?token=`) |
 | `POST` | `/api/admin/scooters` | Crear scooter | `X-Admin-Key` header |
+| `POST` | `/api/admin/scooters/{id}/command` | Comando de emergencia (`lock`/`unlock`). Ver [docs/COMANDOS_EMERGENCIA.md](docs/COMANDOS_EMERGENCIA.md) | `X-Admin-Key` = `ADMIN_COMMAND_KEY` |
 | `POST` | `/api/scooters/{id}/location` | Actualizar ubicación | No (futuro: auth_key) |
 | `GET` | `/api/scooters` | Listar scooters | No |
 | `GET` | `/api/scooters/{id}` | Obtener scooter | No |
