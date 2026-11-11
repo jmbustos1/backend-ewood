@@ -34,6 +34,11 @@ type PendingCommand struct {
 
 	finished atomic.Bool // true cuando el comando terminó; no se reenvía ni reintenta
 	acked    atomic.Bool // true si terminó por ACK real del scooter
+
+	// Contenido del ACK: "status" ("ok"/"error"; vacío en firmwares viejos) y
+	// "result" opcional. Se escriben antes de cerrar Done.
+	ackStatus string
+	ackResult json.RawMessage
 }
 
 // CommandQueue gestiona la cola de comandos para un scooter.
@@ -253,6 +258,13 @@ func (m *TCPConnectionManager) ProcessACK(scooterID uint, ackData map[string]int
 	cmd, cmdExists := queue.pendingCommands[messageID]
 	queue.mu.RUnlock()
 
+	if cmdExists && !cmd.finished.Load() {
+		cmd.ackStatus, _ = ackData["status"].(string)
+		if res, ok := ackData["result"]; ok {
+			cmd.ackResult, _ = json.Marshal(res)
+		}
+	}
+
 	if !cmdExists || !queue.finish(cmd, true) {
 		// Comando desconocido o ya terminado (p. ej. abandonado por timeout).
 		// Si era un unlock abandonado, el scooter pudo quedar desbloqueado sin viaje.
@@ -411,14 +423,33 @@ func (m *TCPConnectionManager) enqueue(scooterID uint, message []byte, clientID,
 	}
 }
 
+// CommandOutcome es el resultado de un comando enviado a un scooter.
+type CommandOutcome struct {
+	Acked     bool            // llegó un ACK real del scooter
+	MessageID uint64          //
+	Status    string          // "status" del ACK ("ok"/"error"; vacío en firmwares viejos)
+	Result    json.RawMessage // "result" del ACK, si vino
+}
+
 // SendToScooterAndWaitACK envía un mensaje y espera el ACK de forma asíncrona (canal, sin polling).
 // Retorna true solo si llegó un ACK real. Si se agota timeout, el comando
 // queda abandonado: el worker no lo reintenta (evita, p. ej., un unlock
 // reenviado después de que el viaje ya se canceló).
 func (m *TCPConnectionManager) SendToScooterAndWaitACK(scooterID uint, message []byte, clientID, requestID string, timeout time.Duration) (bool, uint64, error) {
+	out, err := m.SendCommandAndWait(scooterID, message, clientID, requestID, timeout)
+	return out.Acked, out.MessageID, err
+}
+
+// SendCommandAndWait es SendToScooterAndWaitACK devolviendo también el
+// contenido del ACK (status y result).
+func (m *TCPConnectionManager) SendCommandAndWait(scooterID uint, message []byte, clientID, requestID string, timeout time.Duration) (CommandOutcome, error) {
 	cmd, queue, err := m.enqueue(scooterID, message, clientID, requestID)
 	if err != nil {
-		return false, 0, err
+		return CommandOutcome{}, err
+	}
+
+	outcome := func() CommandOutcome {
+		return CommandOutcome{Acked: cmd.acked.Load(), MessageID: cmd.MessageID, Status: cmd.ackStatus, Result: cmd.ackResult}
 	}
 
 	timer := time.NewTimer(timeout)
@@ -426,15 +457,15 @@ func (m *TCPConnectionManager) SendToScooterAndWaitACK(scooterID uint, message [
 
 	select {
 	case <-cmd.Done:
-		return cmd.acked.Load(), cmd.MessageID, nil
+		return outcome(), nil
 	case <-timer.C:
 		if queue.finish(cmd, false) {
 			log.Printf("🛑 Comando abandonado tras %s sin ACK (scooter %d, message_id: %d, tipo: %s)",
 				timeout, scooterID, cmd.MessageID, cmd.CommandType)
-			return false, cmd.MessageID, nil
+			return CommandOutcome{MessageID: cmd.MessageID}, nil
 		}
 		// Terminó justo al mismo tiempo (ACK o fallo)
-		return cmd.acked.Load(), cmd.MessageID, nil
+		return outcome(), nil
 	}
 }
 

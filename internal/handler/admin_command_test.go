@@ -98,3 +98,77 @@ func TestWebSocketSendToScooterIsIgnored(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// fakeACK responde el próximo comando con el status y result dados.
+func fakeACK(t *testing.T, m *TCPConnectionManager, lines chan map[string]any, wantCmd, status string, result any) {
+	t.Helper()
+	go func() {
+		msg := <-lines
+		if msg["command"] != wantCmd {
+			t.Errorf("command = %v, want %v", msg["command"], wantCmd)
+		}
+		ack := map[string]interface{}{"message_id": msg["message_id"], "status": status}
+		if result != nil {
+			ack["result"] = result
+		}
+		m.ProcessACK(4, ack)
+	}()
+}
+
+func TestAdminCommandReturnsACKResult(t *testing.T) {
+	m := newTestManager(time.Second)
+	withManager(t, m)
+	t.Setenv("ADMIN_COMMAND_KEY", testAdminKey)
+	_, lines := fakeScooter(t, m, 4)
+
+	fakeACK(t, m, lines, "gps_status", "ok", map[string]any{"on": 1, "fix": 3, "sv": []int{8, 4, 2}})
+	w := httptest.NewRecorder()
+	AdminScooterCommandHandler(w, adminRequest("4", testAdminKey, `{"command":"gps_status"}`))
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, `"status":"ok"`) || !strings.Contains(body, `"sv":[8,4,2]`) {
+		t.Fatalf("got %d %s", w.Code, body)
+	}
+
+	fakeACK(t, m, lines, "gps_recycle", "error", map[string]any{"error": "gps_busy"})
+	w = httptest.NewRecorder()
+	AdminScooterCommandHandler(w, adminRequest("4", testAdminKey, `{"command":"gps_recycle"}`))
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "gps_busy") {
+		t.Fatalf("ACK con error: got %d %s; want 502 gps_busy", w.Code, w.Body.String())
+	}
+}
+
+func TestAdminDisruptiveCommandsRespectTrips(t *testing.T) {
+	m := newTestManager(time.Second)
+	withManager(t, m)
+	t.Setenv("ADMIN_COMMAND_KEY", testAdminKey)
+	_, lines := fakeScooter(t, m, 4)
+
+	prev := scooterInTrip
+	t.Cleanup(func() { scooterInTrip = prev })
+	scooterInTrip = func(uint) (bool, error) { return true, nil }
+
+	for _, c := range []string{"reboot", "gps_cold"} {
+		w := httptest.NewRecorder()
+		AdminScooterCommandHandler(w, adminRequest("4", testAdminKey, `{"command":"`+c+`"}`))
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "scooter_in_trip") {
+			t.Fatalf("%s en viaje: got %d %s; want 409", c, w.Code, w.Body.String())
+		}
+	}
+
+	// gps_status no es disruptivo: no consulta viajes
+	scooterInTrip = func(uint) (bool, error) { t.Fatal("no debía consultar viajes"); return false, nil }
+	fakeACK(t, m, lines, "gps_status", "ok", nil)
+	w := httptest.NewRecorder()
+	AdminScooterCommandHandler(w, adminRequest("4", testAdminKey, `{"command":"gps_status"}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("gps_status: got %d %s", w.Code, w.Body.String())
+	}
+
+	// force:true salta la verificación
+	fakeACK(t, m, lines, "reboot", "ok", nil)
+	w = httptest.NewRecorder()
+	AdminScooterCommandHandler(w, adminRequest("4", testAdminKey, `{"command":"reboot","force":true}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("reboot force: got %d %s", w.Code, w.Body.String())
+	}
+}

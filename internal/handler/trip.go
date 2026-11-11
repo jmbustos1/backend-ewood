@@ -114,13 +114,19 @@ func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 // sendScooterCommand envia un comando lock/unlock al scooter via TCP y espera ACK.
 // Retorna (ackReceived, messageID, error).
 func sendScooterCommand(scooterID uint, command string) (bool, uint64, error) {
+	out, err := sendScooterCommandWithResult(scooterID, command)
+	return out.Acked, out.MessageID, err
+}
+
+// sendScooterCommandWithResult envía un comando y retorna el contenido del ACK.
+func sendScooterCommandWithResult(scooterID uint, command string) (CommandOutcome, error) {
 	manager := GetTCPManager()
 	if manager == nil {
-		return false, 0, fmt.Errorf("tcp_manager_not_initialized")
+		return CommandOutcome{}, fmt.Errorf("tcp_manager_not_initialized")
 	}
 
 	if !manager.IsScooterOnline(scooterID) {
-		return false, 0, fmt.Errorf("scooter_not_connected")
+		return CommandOutcome{}, fmt.Errorf("scooter_not_connected")
 	}
 
 	msg := map[string]interface{}{
@@ -129,12 +135,11 @@ func sendScooterCommand(scooterID uint, command string) (bool, uint64, error) {
 	}
 	msgJSON, err := json.Marshal(msg)
 	if err != nil {
-		return false, 0, fmt.Errorf("json_marshal_error")
+		return CommandOutcome{}, fmt.Errorf("json_marshal_error")
 	}
 
 	requestID := fmt.Sprintf("req_%d_%d", scooterID, time.Now().UnixNano())
-	ack, messageID, err := manager.SendToScooterAndWaitACK(scooterID, msgJSON, "", requestID, 25*time.Second)
-	return ack, messageID, err
+	return manager.SendCommandAndWait(scooterID, msgJSON, "", requestID, 25*time.Second)
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
